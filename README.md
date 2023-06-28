@@ -20,21 +20,22 @@ Todo :
 
 ## Getting Started
 
-todo
-
 ### Prerequisites
 
-todo
+A linux machine with docker installed, and that's all.
 
-### Installation
+## dc.sh
 
-todo
+A helper script, based on the DefectDojo project, making it easier to manage and configure the installation of the 
+django-DefectDojo application.
 
-## Usage
+### Usage
 
 ```sh
-./dc.sh {build|start|down}
+./dc.sh {start|down|stop|env|status|credentials|log}
 ```
+
+[//]: # (todo: complete documentation...)
 
 ## License
 
