@@ -2,9 +2,13 @@
 
 # Show confirmation message...
 _show_confirm_message() {
-  read -r -p "Are you sure? [y/N] " response
-  case "$response" in
-    [yY][eE][sS]|[yY])
+  default_answer=$2
+  read -r -p "$1" response
+  if [ -z "$response" ]; then
+    echo "$default_answer"
+    exit
+  fi
+  case "$response" in [yY][eE][sS]|[yY])
       echo "y"
       ;;
     *)
@@ -15,12 +19,104 @@ _show_confirm_message() {
 
 # Show message...
 _show_message() {
-  echo -e "\033[0;32m$1\033[0m"
+  msg=$1
+  level=$2
+  msg_start="\033[0;32m"
+  msg_end="\033[0m"
+  # level>0 => error message
+  if [ -n "$level" ] && [ "$level" -gt 0 ]; then
+    msg_start="\033[0;31m"
+  fi
+  # level<0 => info message
+  if [ -n "$level" ] && [ "$level" -lt 0 ]; then
+    msg_start="\033[0m"
+  fi
+  echo -e "$msg_start$msg$msg_end"
+}
+
+# Check the current profile
+_profile_default_check() {
+  _show_message "Check current profile..."
+#  todo, to check the profile.env file...
+}
+
+# Create a new profile
+_profile_create() {
+  _show_message "create new profile..."
+#  todo, to set password, etc...
+}
+
+# Create a profile with the default file
+_profile_default_create() {
+  if [ -d "$PROFILE_DEFAULT_FOLDER" ]; then
+    choice=0
+    choice_default=0
+    # List the default profiles
+    _show_message "List of available profiles:"
+    message=""
+    for profile_default_file_path in "$PROFILE_DEFAULT_FOLDER"/*; do
+      choice=$(( choice+1 ))
+      profile_default_file="$(echo "$profile_default_file_path"|rev|cut -d"/" -f1|cut -d"." -f2-|rev)"
+      if [ $choice -eq 1 ]; then
+        message="$profile_default_file [$choice]"
+      else
+        message="$message\n$profile_default_file [$choice]"
+      fi
+      if [ "$PROFILE_DEFAULT" = "$profile_default_file" ]; then
+        choice_default=$choice
+        message="$message *"
+      fi
+    done
+    # Empty folder...
+    if [ $choice -eq 0 ]; then
+      message_confirm="The folder $PROFILE_DEFAULT_FOLDER does not contain any profile files!Do you want generate a new one? [Y/n] "
+      create_default_profile=$(_show_confirm_message "$message_confirm" "y")
+      if [ -n "$create_default_profile" ]; then
+        _profile_create
+      else
+        _show_message "Please configure a profile before starting the application!" 1
+        exit 1
+      fi
+
+    fi
+    # Choice the default profile
+    response=0
+    while [ $response -lt 1 ] || [ $response -gt $choice ]; do
+      _show_message "$message" -1
+      confirm_message="\e[32mChoice a default profile (default $choice_default) [1-$choice] \e[0m"
+      echo -ne "\e[32m$confirm_message\e[0m"; read -r -e -p "${confirm_message//?/$'\a'}" response
+      if [ -z "$response" ]; then
+        response=$choice_default
+      fi
+      if ! [[ $response =~ ^[0-9]+$ ]] ; then
+        response=0
+      fi
+    done
+    # Get the default profile path
+    choice_profile=0
+    profile_default_file_path_target=""
+    for profile_default_file_path in "$PROFILE_DEFAULT_FOLDER"/*; do
+      choice_profile=$(( choice_profile+1 ))
+      if [ $choice_profile -eq $response ]; then
+        profile_default_file_path_target=$profile_default_file_path
+        profile_default_file_target="$(echo "$profile_default_file_path_target"|rev|cut -d"/" -f1|cut -d"." -f2-|rev)"
+      fi
+    done
+    # Copy default profile in the project folder
+    _show_message "create default profile..."
+    cp "$profile_default_file_path_target" "$PROFILE_FILE"
+    # Tag the profile in the file
+    echo "DD_PROFILE=$profile_default_file_target">>"$PROFILE_FILE"
+  # Folder not exist...
+  else
+    _show_message "Folder $PROFILE_DEFAULT_FOLDER not exist!" 1
+    exit 1
+  fi
 }
 
 # Build DefectDojo docker images (=~ 4min) : defectdojo-nginx, defectdojo-django
 _build() {
-  # Clone DefectDojo project
+  # Clone DefectDojo project if the folder not exist
   if [ ! -d "$DD_FOLDER" ]; then
     _show_message "Clone the DefectDojo project"
     git clone "$DD_REPO"
@@ -66,7 +162,7 @@ _waiting_start() {
   initializer_status="up"
   while [ "$initializer_status" = "up" ]; do
     i=$(( (i+1) %4 ))
-    printf "\r\033[0;32mWaiting application start... ${spin:$i:1}"
+    printf "\r\033[0;32mWaiting application start... %s" ${spin:$i:1}
     sleep 0.2
     initializer_status=$(_initializer_status)
   done
@@ -75,11 +171,38 @@ _waiting_start() {
   printf " done (%ss)\033[0m\n" $runtime
 }
 
+# starting app with docker-compose and the project profile
+_docker_compose_start() {
+  docker-compose -f "$DD_FOLDER/docker-compose.yml" --profile "$PROFILE" --env-file "$PROFILE.env" up --no-deps -d
+}
+
 # Display help :)
 display_help() {
-    _show_message "Usage: $0 {start|down|stop|env|status|credentials|log}" >&2
-    echo
-    exit 1
+  _show_message "Usage: $0 {start|down|stop|init|env|status|credentials|log}" >&2
+  echo
+  exit 1
+}
+
+# Initialize the profile
+profile_init() {
+  if [ ! -f "$PROFILE_FILE" ]; then
+    message="Currently, no profile is configured. Do you want to use the default one? [Y/n] "
+    use_default_profile=$(_show_confirm_message "$message" "y")
+    if [ -n "$use_default_profile" ]; then
+      _profile_default_create
+    else
+      create_new_profile=$(_show_confirm_message "Create a new profile? [Y/n] " "y")
+      if [ -n "$create_new_profile" ]; then
+        _profile_create
+      else
+        _show_message "Please configure a profile before starting the application!" 1
+        exit 1
+      fi
+    fi
+  else
+    profile_tag=$(grep "DD_PROFILE" "$PROFILE_FILE"|cut -d'=' -f2)
+    _show_message "The project is configured with the $profile_tag profile"
+  fi
 }
 
 # show environment variables
@@ -98,6 +221,16 @@ show_credentials() {
   else
     echo -e "\033[0;32madmin_user:\033[0m admin"
     echo -e "\033[0;32madmin_password:\033[0m $admin_password"
+  fi
+}
+
+# Show celerybeat container logs
+show_log() {
+  app_status=$(_app_status)
+  if [ ! "$app_status" = "up" ]; then
+    _show_message "Application is not started!"
+  else
+    docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" logs -f celerybeat
   fi
 }
 
@@ -123,7 +256,10 @@ start() {
       _build
     fi
     _show_message "Starting application..."
+    PROFILE=postgres-redis
     cd "$DD_FOLDER" && ./dc-up-d.sh "$PROFILE" >&/dev/null
+    # todo
+#    _docker_compose_start
     _waiting_start
     _show_message "Done! To display the credentials, issue the command: ./dc.sh credentials"
   fi
@@ -143,7 +279,7 @@ stop() {
 
 # Remove DefectDojo containers/volumes
 down() {
-  are_you_sure=$(_show_confirm_message)
+  are_you_sure=$(_show_confirm_message "Are you sure? [y/N] ")
   if [ -n "$are_you_sure" ]; then
     _show_message "Remove application containers..."
     cd "$DD_FOLDER" && ./dc-down.sh &>/dev/null
@@ -153,21 +289,13 @@ down() {
   fi
 }
 
-# Show celerybeat container logs
-show_log() {
-  app_status=$(_app_status)
-  if [ ! "$app_status" = "up" ]; then
-    _show_message "Application is not started!"
-  else
-    docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" logs -f celerybeat
-  fi
-}
-
 # Script variables
 CURRENT_DIR=$(pwd)
 DD_REPO="https://github.com/DefectDojo/django-DefectDojo"
-DD_FOLDER="$(pwd)/$(echo $DD_REPO|rev|cut -d"/" -f 1|rev)"
-PROFILE="postgres-redis"
+DD_FOLDER="$(pwd)/$(echo $DD_REPO|rev|cut -d"/" -f1|rev)"
+PROFILE_FILE="profile.env"
+PROFILE_DEFAULT_FOLDER="$DD_FOLDER/docker/environments"
+PROFILE_DEFAULT="postgres-redis"
 DEBUG=0
 
 # Show settings
@@ -184,7 +312,11 @@ case "$1" in
   status)
     status
     ;;
+  init)
+    profile_init
+    ;;
   start)
+    profile_init
     start
     ;;
   down)
