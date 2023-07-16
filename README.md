@@ -19,9 +19,9 @@ Features :
 
 * Manager a defect-dojo instance.
 * Set the profile and release
-* Show application status, environment variables, credentials, api token and logs
-* Update release (WIP)
-* Change api token and credentials (WIP)
+* Show application status, environment variables, api token and logs
+* Update release
+* Change api token and credentials
 * Configuring the DefectDojo app (WIP)
 * Backup and restore (TODO)
 
@@ -38,15 +38,19 @@ A linux machine with docker, docker-compose, and jq installed :
 ### Usage
 
 ```sh
-./ddadmin.sh {start|stop|init|show}
-```
-
-```sh
-./ddadmin.sh show {status|release|env|credentials|token|logs}
+./ddadmin.sh {start|stop|show|update}
 ```
 
 ```sh
 ./ddadmin.sh stop [--remove]
+```
+
+```sh
+./ddadmin.sh show {status|release|env|token|logs}
+```
+
+```sh
+./ddadmin.sh update {token|credential}
 ```
 
 # (todo: complete documentation...)
