@@ -3,12 +3,12 @@
 # Show confirmation message...
 _show_confirm_message() {
   default_answer=$2
-  read -r -p "$1" response
-  if [ -z "$response" ]; then
+  read -r -p "$1" choice_profile_selected
+  if [ -z "$choice_profile_selected" ]; then
     echo "$default_answer"
     exit
   fi
-  case "$response" in [yY][eE][sS]|[yY])
+  case "$choice_profile_selected" in [yY][eE][sS]|[yY])
       echo "y"
       ;;
     *)
@@ -34,6 +34,97 @@ _show_message() {
   echo -e "$msg_start$msg$msg_end"
 }
 
+# Check app status
+_app_status() {
+  docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" ps -q "$DD_CONTAINER_ADM" &>/dev/null
+  # shellcheck disable=SC2181
+  if [ ! $? -eq 0 ]; then
+      echo "down"
+  else
+    # shellcheck disable=SC2046
+    app_status=$(docker ps -q --no-trunc|\
+            grep $(docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" ps -q "$DD_CONTAINER_ADM"))
+    if [ -z "$app_status" ]; then
+      echo "stop"
+    else
+      echo "up"
+    fi
+  fi
+}
+
+# Get the current token API
+_auth_get_token() {
+  command="/app/manage.py dumpdata --skip-checks authtoken.token"
+  token=$(docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" exec celerybeat bash -c "$command"|jq -r '.[0].pk')
+  echo -e "\033[0;32mTOKEN:\033[0m $token"
+}
+
+# Update the release
+_check_release_update() {
+  if [ ! "$RELEASE" = "$DD_RELEASE_LATEST" ]; then
+    message="A new version of the DefectDojo project has been released: ${DD_RELEASE_LATEST}. Current version is ${RELEASE}. Do you want to update? [y/N] "
+    update_project=$(_show_confirm_message "$message")
+    if [ -n "$update_project" ]; then
+      _project_clone "$DD_RELEASE_LATEST"
+      # Update the version
+      sed -i -e "/DD_RELEASE=/s/=.*/=$DD_RELEASE_LATEST/" "$PROFILE_FILE"
+      # Restart the application
+      docker-compose -f "$DD_FOLDER/docker-compose.yml" --profile "$PROFILE" --env-file "profile.env" restart
+      _waiting_start
+    fi
+  fi
+}
+
+# Check initializer status
+_initializer_status() {
+  # shellcheck disable=SC2046
+  initializer_status=$(docker ps -q --no-trunc | \
+          grep $(docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" ps -q initializer))
+  if [ -z "$initializer_status" ]; then
+    echo "stop"
+  else
+    echo "up"
+  fi
+}
+
+# Copy the profile file selected
+_profile_copy_selected() {
+  choice_profile_selected=$1
+  generate_database_password=$2
+  # Get the default profile path
+  choice_profile=0
+  profile_default_file_path_target=""
+  for profile_default_file_path in "$PROFILE_DEFAULT_FOLDER"/*; do
+    choice_profile=$(( choice_profile+1 ))
+    if [ $choice_profile -eq "$choice_profile_selected" ]; then
+      profile_default_file_path_target=$profile_default_file_path
+      profile_default_file_target="$(echo "$profile_default_file_path_target"|rev|cut -d"/" -f1|cut -d"." -f2-|rev)"
+    fi
+  done
+  # Copy default profile in the project folder
+  _show_message "create default profile..."
+  cp "$profile_default_file_path_target" "$PROFILE_FILE"
+  # Change the default database password
+  db_password=""
+  # Generate a new database password
+  if [[ -n $generate_database_password ]]; then
+    db_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13 && echo '')
+  else
+    while [ -z "$db_password" ]; do
+      confirm_message="Choice a database password : "
+          echo -ne "\e[32m$confirm_message\e[0m"; read -r -e -p "${confirm_message//?/$'\a'}" db_password
+    done
+  fi
+  db_database_url="postgresql\:\/\/defectdojo\:$db_password\@postgres\:5432\/defectdojo"
+  sed -i -e "/DD_DATABASE_PASSWORD=/s/=.*/=$db_password/" "$PROFILE_FILE"
+  sed -i -e "/DD_DATABASE_URL=/s/=.*/=$db_database_url/" "$PROFILE_FILE"
+  # Tag the profile in the profile file
+  echo "DD_PROFILE=$profile_default_file_target">>"$PROFILE_FILE"
+  # Tag the release in the profile file
+  release=$(cd "$DD_FOLDER" && git describe)
+  echo "DD_RELEASE=$release">>"$PROFILE_FILE"
+}
+
 # Create a profile with the default file
 _profile_create() {
   if [ -d "$PROFILE_DEFAULT_FOLDER" ]; then
@@ -50,7 +141,7 @@ _profile_create() {
       else
         message="$message\n$profile_default_file [$choice]"
       fi
-      if [ "$PROFILE_DEFAULT" = "$profile_default_file" ]; then
+      if [ "$PROFILE_DEFAULT" = "$choice" ]; then
         choice_default=$choice
         message="$message *"
       fi
@@ -61,45 +152,30 @@ _profile_create() {
       exit 1
     fi
     # Choice the profile
-    response=0
-    while [ $response -lt 1 ] || [ $response -gt $choice ]; do
+    choice_profile_selected=0
+    while [ $choice_profile_selected -lt 1 ] || [ $choice_profile_selected -gt $choice ]; do
       _show_message "$message" -1
       confirm_message="Choice a default profile (default $choice_default) [1-$choice] "
-      echo -ne "\e[32m$confirm_message\e[0m"; read -r -e -p "${confirm_message//?/$'\a'}" response
-      if [ -z "$response" ]; then
-        response=$choice_default
+      echo -ne "\e[32m$confirm_message\e[0m"; read -r -e -p "${confirm_message//?/$'\a'}" choice_profile_selected
+      if [ -z "$choice_profile_selected" ]; then
+        choice_profile_selected=$choice_default
       fi
-      if ! [[ $response =~ ^[0-9]+$ ]] ; then
-        response=0
-      fi
-    done
-    # Get the default profile path
-    choice_profile=0
-    profile_default_file_path_target=""
-    for profile_default_file_path in "$PROFILE_DEFAULT_FOLDER"/*; do
-      choice_profile=$(( choice_profile+1 ))
-      if [ $choice_profile -eq $response ]; then
-        profile_default_file_path_target=$profile_default_file_path
-        profile_default_file_target="$(echo "$profile_default_file_path_target"|rev|cut -d"/" -f1|cut -d"." -f2-|rev)"
+      if ! [[ $choice_profile_selected =~ ^[0-9]+$ ]] ; then
+        choice_profile_selected=0
       fi
     done
-    # Copy default profile in the project folder
-    _show_message "create default profile..."
-    cp "$profile_default_file_path_target" "$PROFILE_FILE"
-    # Change the default database password
-    db_password=""
-    while [ -z "$db_password" ]; do
-      confirm_message="Choice a database password : "
-          echo -ne "\e[32m$confirm_message\e[0m"; read -r -e -p "${confirm_message//?/$'\a'}" db_password
-    done
-    db_database_url="postgresql\:\/\/defectdojo\:$db_password\@postgres\:5432\/defectdojo"
-    sed -i -e "/DD_DATABASE_PASSWORD=/s/=.*/=$db_password/" "$PROFILE_FILE"
-    sed -i -e "/DD_DATABASE_URL=/s/=.*/=$db_database_url/" "$PROFILE_FILE"
-    # Tag the profile in the profile file
-    echo "DD_PROFILE=$profile_default_file_target">>"$PROFILE_FILE"
-    # Tag the release in the profile file
-    release=$(cd "$DD_FOLDER" && git describe)
-    echo "DD_RELEASE=$release">>"$PROFILE_FILE"
+    _profile_copy_selected $choice_profile_selected
+  # Folder not exist...
+  else
+    _show_message "Folder $PROFILE_DEFAULT_FOLDER not exist!" 1
+    exit 1
+  fi
+}
+
+# Create a default profile file
+_profile_create_default () {
+  if [ -d "$PROFILE_DEFAULT_FOLDER" ]; then
+    _profile_copy_selected "$PROFILE_DEFAULT" 1
   # Folder not exist...
   else
     _show_message "Folder $PROFILE_DEFAULT_FOLDER not exist!" 1
@@ -128,10 +204,10 @@ _project_clone() {
     if [ -z "$message_clone_latest" ]; then
       release=""
       while [ -z "$release" ]; do
-        read -r -p "Enter release version: " response_release
-        release=$(curl  -s "$DD_REPO_API/tags"|jq -r ".[]|select( .name == \"$response_release\" ).name")
+        read -r -p "Enter release version: " choice_profile_selected_release
+        release=$(curl  -s "$DD_REPO_API/tags"|jq -r ".[]|select( .name == \"$choice_profile_selected_release\" ).name")
         if [ -z "$release" ]; then
-          _show_message "$response_release is not a valid version!" 1
+          _show_message "$choice_profile_selected_release is not a valid version!" 1
         fi
       done
     else
@@ -143,47 +219,39 @@ _project_clone() {
   rm -rf "$DD_FOLDER" && git clone --depth 1 --branch "$release" "$DD_REPO"
 }
 
-# Update the release
-_check_release_update() {
-  if [ ! "$RELEASE" = "$DD_RELEASE_LATEST" ]; then
-    message="A new version of the DefectDojo project has been released: ${DD_RELEASE_LATEST}. Current version is ${RELEASE}. Do you want to update? [y/N] "
-    update_project=$(_show_confirm_message "$message")
-    if [ -n "$update_project" ]; then
-      _project_clone "$DD_RELEASE_LATEST"
-      # Update the version
-      sed -i -e "/DD_RELEASE=/s/=.*/=$DD_RELEASE_LATEST/" "$PROFILE_FILE"
-    fi
+# Initialize the project
+_project_init() {
+  option=$1
+  # Clone DefectDojo project if the folder not exist
+  if [ ! -d "$DD_FOLDER" ]; then
+    _project_clone
   fi
-}
-
-# Check app status
-_app_status() {
-  docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" ps -q "$DD_CONTAINER_ADM" &>/dev/null
-  # shellcheck disable=SC2181
-  if [ ! $? -eq 0 ]; then
-      echo "down"
-  else
-    # shellcheck disable=SC2046
-    app_status=$(docker ps -q --no-trunc|\
-            grep $(docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" ps -q "$DD_CONTAINER_ADM"))
-    if [ -z "$app_status" ]; then
-      echo "stop"
+  # Initialize the default profile
+  if [ "$option" = "--install-auto" ]; then
+    if [ -f "$PROFILE_FILE" ]; then
+      message="Currently, a profile file is already configured. Do you want to use it? [Y/n] "
+      use_profile_file=$(_show_confirm_message "$message" "y")
+      if [ -z "$use_profile_file" ]; then
+        # backup the current file
+        mv -f "$PROFILE_FILE" "$(date +'%Y%m%d_%H%M')_$PROFILE_FILE"
+        _profile_create_default
+      fi
     else
-      echo "up"
+      _profile_create_default
     fi
+  # Initialize the profile if the file not exist
+  elif [ ! -f "$PROFILE_FILE" ]; then
+      message="Currently, no profile is configured. Do you want to use choose one? [Y/n] "
+      choice_profile=$(_show_confirm_message "$message" "y")
+      if [ -n "$choice_profile" ]; then
+        _profile_create
+      else
+        _show_message "Please configure a profile before starting the application!" 1
+        exit 1
+      fi
   fi
-}
-
-# Check initializer status
-_initializer_status() {
-  # shellcheck disable=SC2046
-  initializer_status=$(docker ps -q --no-trunc | \
-          grep $(docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" ps -q initializer))
-  if [ -z "$initializer_status" ]; then
-    echo "stop"
-  else
-    echo "up"
-  fi
+  _profile_init
+  _show_message "The project is configured with the $PROFILE profile and the release $RELEASE"
 }
 
 # Waiting application start
@@ -203,11 +271,15 @@ _waiting_start() {
   printf " done (%ss)\033[0m\n" $runtime
 }
 
-# Get the current token API
-_auth_get_token() {
-  command="/app/manage.py dumpdata --skip-checks authtoken.token"
-  token=$(docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" exec celerybeat bash -c "$command"|jq -r '.[0].pk')
-  echo -e "\033[0;32mTOKEN:\033[0m $token"
+# Update the admin password
+_update_admin_password() {
+  docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" exec "$DD_CONTAINER_ADM" bash -c "/app/manage.py changepassword admin"
+}
+
+# Update new app version
+_update_release() {
+  _profile_init
+  _check_release_update
 }
 
 # Update the token API
@@ -216,19 +288,16 @@ _update_token() {
   docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" exec "$DD_CONTAINER_ADM" bash -c "$command"
 }
 
-# Update the admin password
-_update_admin_password() {
-  docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" exec "$DD_CONTAINER_ADM" bash -c "/app/manage.py changepassword admin"
-}
-
 # Display help :)
 display_help() {
-  if [ "$1" = "show" ]; then
-     _show_message "Usage: $0 show {status|release|env|token|logs}" >&2
+  if [ "$1" = "start" ]; then
+   _show_message "Usage: $0 start [--install-auto]" >&2
   elif [ "$1" = "stop" ]; then
     _show_message "Usage: $0 stop [--remove]" >&2
+  elif [ "$1" = "show" ]; then
+    _show_message "Usage: $0 show {status|release|env|token|logs}" >&2
   elif [ "$1" = "update" ]; then
-    _show_message "Usage: $0 update {token|credential}" >&2
+    _show_message "Usage: $0 update {release|token|password}" >&2
   else
     _show_message "Usage: $0 {start|stop|show|update}" >&2
   fi
@@ -236,33 +305,12 @@ display_help() {
   exit 1
 }
 
-# Initialize the project
-project_init() {
-  # Clone DefectDojo project if the folder not exist
-  if [ ! -d "$DD_FOLDER" ]; then
-    _project_clone
-  fi
-  # Initialize the profile if the file not exist
-  if [ ! -f "$PROFILE_FILE" ]; then
-    message="Currently, no profile is configured. Do you want to use choose one? [Y/n] "
-    choice_profile=$(_show_confirm_message "$message" "y")
-    if [ -n "$choice_profile" ]; then
-      _profile_create
-      _profile_init
-      _show_message "The project is now configured with the $PROFILE profile and the release $RELEASE"
-    else
-      _show_message "Please configure a profile before starting the application!" 1
-      exit 1
-    fi
-  else
-    _profile_init
-  fi
-}
-
 # Starting docker compose with the profile postgres-redis
 start() {
+  option=$1
   app_status=$(_app_status)
   first_start=0
+  # Check the application status
   if [ "$app_status" = "up" ]; then
     _show_message "Application is already started!"
     exit 0
@@ -270,8 +318,10 @@ start() {
   if [ "$app_status" = "down" ]; then
     first_start=1
   fi
-  project_init
-  _check_release_update
+  _project_init "$option"
+  if [ ! "$option" = "--install-auto" ]; then
+    _check_release_update
+  fi
   # Build DefectDojo docker images (=~ 4min) : defectdojo-nginx, defectdojo-django
   if [ $first_start -eq 1 ]; then
     _show_message "Image building..."
@@ -307,7 +357,6 @@ stop() {
       docker-compose -f "$DD_FOLDER/docker-compose.yml" --profile "$PROFILE" --env-file "profile.env" down
       # shellcheck disable=SC2046
       docker volume rm $(docker volume ls --filter name=django-defectdojo) &>/dev/null
-      rm -f profile.env
       _show_message "Done!"
     fi
   fi
@@ -349,7 +398,7 @@ show() {
   fi
   # show environment variables
   if [ "$1" = "env" ]; then
-    project_init
+    _profile_init
     _show_message "Environment variables"
     grep -v "DD_DATABASE_PASSWORD" "profile.env"|grep -v 'DD_TEST_DATABASE_URL'|grep -ve '^$'
   fi
@@ -372,11 +421,13 @@ show() {
 }
 
 update() {
+  if [ "$1" = "release" ]; then
+    _update_release
+  fi
   if [ "$1" = "token" ]; then
     _update_token
-  #  docker-compose --log-level ERROR -f "$DD_FOLDER/docker-compose.yml" exec "$DD_CONTAINER_ADM" bash -c "/app/manage.py dumpdata --skip-checks auth.user"
   fi
-  if [ "$1" = "credential" ]; then
+  if [ "$1" = "password" ]; then
     _update_admin_password
   fi
   exit 0
@@ -391,7 +442,7 @@ DD_CONTAINER_ADM=celerybeat
 
 PROFILE_FILE="profile.env"
 PROFILE_DEFAULT_FOLDER="$DD_FOLDER/docker/environments"
-PROFILE_DEFAULT="postgres-redis"
+PROFILE_DEFAULT=4 # postgres-redis
 
 ## Menu
 options=$#
@@ -400,9 +451,14 @@ if [ $options -eq 0 ]; then
 else
   case "$1" in
     start)
-      if [ ! $options -eq 1 ]; then display_help; fi
-      start
-      ;;
+      option=$2
+      if [ $options -eq 2 ]; then
+        if [ ! "$option" = "--install-auto" ]; then display_help start; fi
+      elif [ ! $options -eq 1 ]; then
+        display_help start
+      fi
+      start "$option"
+    ;;
     stop)
       option=$2
       if [ $options -eq 2 ]; then
@@ -411,7 +467,7 @@ else
         display_help stop
       fi
       stop "$option"
-      ;;
+    ;;
     show)
       if [ ! $options -eq 2 ]; then
         display_help show
@@ -419,15 +475,18 @@ else
         if [[ ! $2 =~ status|release|env|token|logs ]]; then display_help show; fi
         show "$2"
       fi
-      ;;
+    ;;
     update)
-        if [ ! $options -eq 2 ]; then
-          display_help update
-        else
-          if [[ ! $2 =~ token|credential ]]; then display_help update; fi
-          update "$2"
-        fi
-        ;;
+      if [ ! $options -eq 2 ]; then
+        display_help update
+      else
+        if [[ ! $2 =~ release|token|password ]]; then display_help update; fi
+        update "$2"
+      fi
+    ;;
+    shortlist)
+      echo start stop show update shortlist
+    ;;
     *)
       display_help
       ;;

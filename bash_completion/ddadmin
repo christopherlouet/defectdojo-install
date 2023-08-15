@@ -1,0 +1,12 @@
+_ddadmin()
+{
+    _ddadmin_commands=$($(pwd)/ddadmin.sh shortlist)
+
+    local cur
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    COMPREPLY=( $(compgen -W "${_ddadmin_commands}" -- ${cur}) )
+
+    return 0
+}
+complete -o nospace -F _ddadmin ./ddadmin.sh
