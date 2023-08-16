@@ -1,6 +1,6 @@
 ## About The Project
 
-The `ddadmin.sh` helper script, based on the DefectDojo project, is a simple tool to facilitate
+The `ddadmin.sh` helper script, based on the DefectDojo project, is a simple bash script to facilitate
 installing the django-DefectDojo application, with the docker-compose method.
 
 Features:
