@@ -1,0 +1,9 @@
+.dockerignore
+.idea
+.git
+.gitignore
+.pytest_cache
+bash_completion
+django-DefectDojo
+Dockerfile
+tests.sh
