@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "defect-dojo-install"
-version = "0.1.0"
+version = "1.0.0"
 description = "A simple bash script to facilitate installing the django-DefectDojo application"
 authors = ["Christopher LOUËT"]
 license = "MIT"
