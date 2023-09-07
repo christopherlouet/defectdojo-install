@@ -1,37 +1,12 @@
 #!/bin/bash
 
-# Show confirmation message...
-_show_confirm_message() {
-  default_answer=$2
-  read -r -p "$1" choice_profile_selected
-  if [ -z "$choice_profile_selected" ]; then
-    echo "$default_answer"
-    exit
-  fi
-  case "$choice_profile_selected" in [yY][eE][sS]|[yY])
-      echo "y"
-      ;;
-    *)
-      echo ""
-      ;;
-  esac
+# Messages
+_show_message() {
+  ./libs/messages.sh "show_message" "$@"
 }
 
-# Show message...
-_show_message() {
-  msg=$1
-  level=$2
-  msg_start="\033[0;32m"
-  msg_end="\033[0m"
-  # level>0 => error message
-  if [ -n "$level" ] && [ "$level" -gt 0 ]; then
-    msg_start="\033[0;31m"
-  fi
-  # level<0 => info message
-  if [ -n "$level" ] && [ "$level" -lt 0 ]; then
-    msg_start="\033[0m"
-  fi
-  echo -e "$msg_start$msg$msg_end"
+_show_confirm_message() {
+  ./libs/messages.sh "show_confirm_message" "$@"
 }
 
 # Check app status
@@ -308,7 +283,9 @@ display_help() {
 # Starting docker compose with the profile postgres-redis
 start() {
   option=$1
-  app_status=$(_app_status)
+#  _app_status
+#  app_status=$(_app_status)
+  app_status="down"
   first_start=0
   # Check the application status
   if [ "$app_status" = "up" ]; then
@@ -325,7 +302,7 @@ start() {
   # Build DefectDojo docker images (=~ 4min) : defectdojo-nginx, defectdojo-django
   if [ $first_start -eq 1 ]; then
     _show_message "Image building..."
-    docker-compose -f "$DD_FOLDER/docker-compose.yml" --profile "$PROFILE" --env-file "profile.env" build
+    docker-compose -f "$DD_FOLDER/docker-compose.yml" --profile mysql-rabbitmq --profile postgres-redis --env-file "profile.env" build
   fi
   _show_message "Starting application..."
   docker-compose -f "$DD_FOLDER/docker-compose.yml" --profile "$PROFILE" --env-file "profile.env" up --no-deps -d

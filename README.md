@@ -1,7 +1,8 @@
+[![MIT license](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/christopherlouet/defectdojo-install/blob/main/LICENSE)
+
 ## About The Project
 
-The `ddadmin.sh` helper script, based on the DefectDojo project, is a simple bash script to facilitate
-installing the django-DefectDojo application, with the docker-compose method.
+`ddadmin.sh`, an all-in-one bash script for easy installation of the DefectDojo project with the docker-compose method.
 
 Features:
 
@@ -23,7 +24,7 @@ A linux machine with docker, docker-compose, and jq installed:
 
 To install the bash completion:
 
-```sh
+```bash
 sudo cp bash_completion/ddadmin /etc/bash_completion.d/ddadmin
 ```
 
@@ -37,13 +38,13 @@ If no profile file is configured yet, the script will generate it according to t
 
 Run this command to start application containers in manual mode:
 
-```sh
+```bash
 ./ddadmin.sh start
 ```
 
 To automatically install the latest version, with the default "postgres-redis" profile file, run this command:
 
-```sh
+```bash
 ./ddadmin.sh start --install-auto
 ```
 
@@ -53,13 +54,13 @@ Once the installation is complete, you can access to the web interface at http:/
 
 To stop application containers:
 
-```sh
+```bash
 ./ddadmin.sh stop
 ```
 
 Or to remove containers and volumes from the application:
 
-```sh
+```bash
 ./ddadmin.sh stop --remove
 ```
 
@@ -67,31 +68,31 @@ Or to remove containers and volumes from the application:
 
 To show the app status:
 
-```sh
+```bash
 ./ddadmin.sh show status
 ```
 
 Get information about DefectDojo releases:
 
-```sh
+```bash
 ./ddadmin.sh show release
 ```
 
 Show the environment variables:
 
-```sh
+```bash
 ./ddadmin.sh show env
 ```
 
 Display the API token:
 
-```sh
+```bash
 ./ddadmin.sh show token
 ```
 
 View application logs:
 
-```sh
+```bash
 ./ddadmin.sh show logs
 ```
 
@@ -99,20 +100,31 @@ View application logs:
 
 To update the latest version of the application:
 
-```sh
+```bash
 ./ddadmin.sh update release
 ```
 
 To update the API token:
 
-```sh
+```bash
 ./ddadmin.sh update token
 ```
 
 To update the admin password:
 
-```sh
+```bash
 ./ddadmin.sh update password
+```
+
+## Tests
+
+The pytest framework is used to run the unit tests of bash functions.
+We will use a Docker container based on a Python environment to run the tests.
+
+To launch the tests, we will use the command:
+
+```bash
+./tests.sh
 ```
 
 ## License
